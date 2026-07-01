@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from functools import wraps
 from valkey import *
 from util.waiters import *
-from valkey.cluster import VALKEY_CLUSTER_HASH_SLOTS
+from valkey.cluster import VALKEY_CLUSTER_HASH_SLOTS, ValkeyCluster
 from enum import Enum
 
 MAX_PING_TRIES = 60
@@ -916,12 +916,7 @@ class ClusterTestCase(ValkeyTestCase):
         for i in range(num_shards, total):
             self.waitForReplicaToSyncUp(self.nodes[i])
             # Allow read-only queries to be served by the replica.
-            try:
-                self.nodes[i].client.readonly()
-            except Exception:
-                logging.warning(
-                    "READONLY failed on replica port {}".format(self.nodes[i].port)
-                )
+            self.nodes[i].client.readonly()
 
     def setup_cluster(self, num_shards, num_replicas_per_shard):
         """Create and fully bootstrap a cluster, returning a cluster client.
@@ -950,8 +945,6 @@ class ClusterTestCase(ValkeyTestCase):
 
     def get_cluster_client(self):
         """Return a cluster-aware client that follows MOVED/ASK redirections."""
-        from valkey.cluster import ValkeyCluster
-
         primary = self.nodes[0]
         # A cluster client discovers the topology by connecting to the host each
         # node advertises in CLUSTER SLOTS, not the bind address. When a node
