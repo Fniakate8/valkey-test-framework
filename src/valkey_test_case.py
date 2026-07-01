@@ -783,11 +783,6 @@ class ClusterNodeHandle(ValkeyServerHandle):
                 )
                 return
 
-    def start(self, connect_client=True):
-        super(ClusterNodeHandle, self).start(connect_client=connect_client)
-        if connect_client:
-            self._set_node_id()
-
     def connect(self):
         client = super(ClusterNodeHandle, self).connect()
         self._set_node_id()
@@ -821,11 +816,11 @@ class ClusterNodeHandle(ValkeyServerHandle):
             timeout=TEST_MAX_WAIT_TIME_SECONDS,
         )
 
-    def wait_for_cluster_know_node(self, nodeid):
+    def wait_for_cluster_known_node(self, nodeid):
         def knows():
             nodesInfo = self.client.cluster("NODES")
             for key in nodesInfo:
-                if re.match(nodeid, nodesInfo[key]["node_id"]):
+                if nodeid == nodesInfo[key]["node_id"]:
                     return True
             return False
 
@@ -875,9 +870,9 @@ class ClusterTestCase(ValkeyTestCase):
             self.create_node()
         return self.nodes
 
-    def start_all_nodes(self):
+    def start_all_nodes(self, wait_for_ping=True, connect_client=True):
         for node in self.nodes:
-            node.start()
+            node.start(wait_for_ping=wait_for_ping, connect_client=connect_client)
 
     def create_cluster(self, num_nodes):
         """Start `num_nodes` nodes and gossip them into a single cluster."""
@@ -908,7 +903,7 @@ class ClusterTestCase(ValkeyTestCase):
             shard_idx = i % num_shards
             primary = self.nodes[shard_idx]
             # Make sure the replica knows the primary before replicating.
-            self.nodes[i].wait_for_cluster_know_node(primary.nodeid)
+            self.nodes[i].wait_for_cluster_known_node(primary.nodeid)
             self.nodes[i].replicate(primary.nodeid)
 
         # Wait for each shard's replicas to come online and sync up.
