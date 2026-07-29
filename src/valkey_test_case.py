@@ -728,3 +728,57 @@ class ReplicationTestCase(ValkeyTestCase):
             pinfo.get_primary_repl_offset(),
             timeout=TEST_MAX_WAIT_TIME_SECONDS,
         )
+
+
+class ReuseServerTestCase(ValkeyTestCaseBase):
+    """Test case that reuses a single server across all tests in the class.
+
+    Instead of spawning a fresh server per test (~42ms each), one server is
+    started for the entire class and FLUSHALL + CONFIG RESETSTAT run between
+    tests (~5ms) to reset state.
+    """
+
+    server_path = "valkey-server"
+
+    def _ensure_testdir(self):
+        if not os.path.isdir(self.testdir):
+            try:
+                os.mkdir(self.testdir)
+            except OSError:
+                assert os.path.isdir(self.testdir)
+
+    @pytest.fixture(autouse=True, scope="class")
+    def class_server(self, class_port_tracker):
+        self.__class__.port_tracker = class_port_tracker
+        self.__class__.port = class_port_tracker.get_unused_port()
+        self.__class__._server_list = []
+        self._ensure_testdir()
+        server = ValkeyServerHandle(
+            bind_ip=self.DEFAULT_BIND_IP,
+            port=self.__class__.port,
+            port_tracker=class_port_tracker,
+            cwd=self.testdir,
+            server_path=self.server_path,
+        )
+        server.start(wait_for_ping=True, connect_client=True)
+        self.__class__._shared_server = server
+        self.__class__._shared_client = server.client
+        self.__class__._server_list.append(server)
+        yield
+        for s in self.__class__._server_list:
+            if s:
+                s.exit()
+
+    @pytest.fixture(autouse=True)
+    def reset_between_tests(self, class_server):
+        yield
+        self._shared_client.flushall()
+        self._shared_client.execute_command("CONFIG", "RESETSTAT")
+
+    @property
+    def server(self):
+        return self.__class__._shared_server
+
+    @property
+    def client(self):
+        return self.__class__._shared_client
