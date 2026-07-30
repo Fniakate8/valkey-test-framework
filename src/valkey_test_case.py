@@ -730,55 +730,75 @@ class ReplicationTestCase(ValkeyTestCase):
         )
 
 
-class ReuseServerTestCase(ValkeyTestCaseBase):
+class ReuseServerTestCase(ValkeyTestCase):
     """Test case that reuses a single server across all tests in the class.
 
-    Instead of spawning a fresh server per test (~42ms each), one server is
-    started for the entire class and FLUSHALL + CONFIG RESETSTAT run between
-    tests (~5ms) to reset state.
+    Instead of spawning a fresh server per test, one server is started on the
+    first create_server() call and reused for all subsequent tests. FLUSHALL +
+    CONFIG RESETSTAT run between tests to reset state.
+
+    Usage — just change your base class:
+
+        class MyModuleTestCase(ReuseServerTestCase):
+            ...  # keep your existing setup_test exactly as-is
+
+    That's it. self.server, self.client, create_server() all work as before.
     """
 
-    server_path = "valkey-server"
+    def create_server(
+        self,
+        testdir=None,
+        bind_ip=None,
+        port=None,
+        server_path=None,
+        args="",
+        skip_teardown=False,
+        conf_file=None,
+        external_server=False,
+        wait_for_ping=True,
+        connect_client=True,
+    ):
+        if hasattr(self.__class__, '_shared_server') and self.__class__._shared_server:
+            return self.__class__._shared_server, self.__class__._shared_client
 
-    def _ensure_testdir(self):
-        if not os.path.isdir(self.testdir):
-            try:
-                os.mkdir(self.testdir)
-            except OSError:
-                assert os.path.isdir(self.testdir)
+        if server_path is None:
+            server_path = self.server_path
+
+        server, client = super().create_server(
+            testdir=testdir,
+            bind_ip=bind_ip,
+            port=port,
+            server_path=server_path,
+            args=args,
+            skip_teardown=skip_teardown,
+            conf_file=conf_file,
+            external_server=external_server,
+            wait_for_ping=wait_for_ping,
+            connect_client=connect_client,
+        )
+        self.__class__._shared_server = server
+        self.__class__._shared_client = client
+        self.__class__._initial_config = client.config_get("*")
+        return server, client
+
+    def teardown(self):
+        if hasattr(self.__class__, '_shared_server') and self.__class__._shared_server:
+            client = self.__class__._shared_client
+            client.flushall()
+            client.execute_command("CONFIG", "RESETSTAT")
+            if hasattr(self.__class__, '_initial_config'):
+                current = client.config_get("*")
+                for key, val in self.__class__._initial_config.items():
+                    if current.get(key) != val:
+                        try:
+                            client.config_set(key, val)
+                        except Exception:
+                            pass
 
     @pytest.fixture(autouse=True, scope="class")
-    def class_server(self, class_port_tracker):
-        self.__class__.port_tracker = class_port_tracker
-        self.__class__.port = class_port_tracker.get_unused_port()
-        self.__class__._server_list = []
-        self._ensure_testdir()
-        server = ValkeyServerHandle(
-            bind_ip=self.DEFAULT_BIND_IP,
-            port=self.__class__.port,
-            port_tracker=class_port_tracker,
-            cwd=self.testdir,
-            server_path=self.server_path,
-        )
-        server.start(wait_for_ping=True, connect_client=True)
-        self.__class__._shared_server = server
-        self.__class__._shared_client = server.client
-        self.__class__._server_list.append(server)
+    def class_teardown(self, request):
         yield
-        for s in self.__class__._server_list:
-            if s:
-                s.exit()
-
-    @pytest.fixture(autouse=True)
-    def reset_between_tests(self, class_server):
-        yield
-        self._shared_client.flushall()
-        self._shared_client.execute_command("CONFIG", "RESETSTAT")
-
-    @property
-    def server(self):
-        return self.__class__._shared_server
-
-    @property
-    def client(self):
-        return self.__class__._shared_client
+        if hasattr(self.__class__, '_shared_server') and self.__class__._shared_server:
+            self.__class__._shared_server.exit()
+            self.__class__._shared_server = None
+            self.__class__._shared_client = None
