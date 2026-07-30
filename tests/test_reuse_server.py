@@ -7,12 +7,16 @@ restarting the server.
 """
 
 import pytest
-from conftest import class_port_tracker, resource_port_tracker
+from conftest import resource_port_tracker
 from valkey_test_case import ReuseServerTestCase
 
 
 class TestReuseServer(ReuseServerTestCase):
     """Verifies that server reuse works and tests are isolated."""
+
+    @pytest.fixture(autouse=True)
+    def setup_test(self, setup):
+        self.server, self.client = self.create_server(testdir=self.testdir)
 
     def test_write_and_read(self):
         """Basic write/read on the shared server."""

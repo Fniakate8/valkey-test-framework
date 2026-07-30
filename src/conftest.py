@@ -108,13 +108,3 @@ def resource_port_tracker(request):
     """
     with PortTracker(request.node.nodeid) as p:
         yield p
-
-
-@pytest.fixture(scope="class")
-def class_port_tracker(request):
-    """
-    Create port tracker shared across all tests in a class.
-    Used by ReuseServerTestCase to maintain one server per class.
-    """
-    with PortTracker(request.node.nodeid) as p:
-        yield p
