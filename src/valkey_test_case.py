@@ -1,3 +1,4 @@
+import logging
 import subprocess
 import time
 import os
@@ -787,8 +788,24 @@ class ReuseServerTestCase(ValkeyTestCase):
         if hasattr(self.__class__, "_shared_server") and self.__class__._shared_server:
             client = self.__class__._shared_client
             try:
+                client.execute_command("REPLICAOF", "NO", "ONE")
                 client.flushall()
                 client.execute_command("CONFIG", "RESETSTAT")
+                client.execute_command("SCRIPT", "FLUSH")
+                try:
+                    client.execute_command("FUNCTION", "FLUSH")
+                except Exception:
+                    pass
+                users = client.execute_command("ACL", "LIST")
+                for entry in users:
+                    if isinstance(entry, bytes):
+                        entry = entry.decode()
+                    if not entry.startswith("user default "):
+                        username = entry.split(" ")[1]
+                        client.execute_command("ACL", "DELUSER", username)
+                client.execute_command(
+                    "ACL", "SETUSER", "default", "reset", "on", "~*", "&*", "+@all"
+                )
                 if hasattr(self.__class__, "_initial_config"):
                     current = client.config_get("*")
                     for key, val in self.__class__._initial_config.items():
