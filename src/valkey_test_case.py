@@ -796,8 +796,17 @@ class ReuseServerTestCase(ValkeyTestCase):
                             try:
                                 client.config_set(key, val)
                             except Exception:
-                                pass
+                                logging.warning(
+                                    f"Could not reset config '{key}' — "
+                                    f"tearing down server for fresh restart"
+                                )
+                                self.__class__._shared_server.exit()
+                                self.__class__._shared_server = None
+                                self.__class__._shared_client = None
+                                return
             except Exception:
+                logging.warning("Server unreachable during teardown — killing process")
+                self.__class__._shared_server.exit()
                 self.__class__._shared_server = None
                 self.__class__._shared_client = None
 

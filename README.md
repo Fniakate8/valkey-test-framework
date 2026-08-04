@@ -67,4 +67,37 @@ class TestExamplePerClassSetup(ExampleTestCaseBase):
         client.execute_command("SET K V")
 ```
 
+**Reusing a Single Server Across All Tests in a Class**
+
+If your tests don't need a fresh server each time (most data-operation tests), use `ReuseServerTestCase` to share one server across the entire class. This avoids the overhead of spawning a new process per test — especially useful when module loading is expensive.
+
+```
+class ExampleModuleTestCase(ReuseServerTestCase):
+    @pytest.fixture(autouse=True)
+    def setup_test(self, setup):
+        server_path = "/path_to_your_valkey_server_binary"
+        args = {"loadmodule": "/path/to/your/module.so"}
+        self.server, self.client = self.create_server(
+            testdir=self.testdir, server_path=server_path, args=args
+        )
+
+class TestExampleReuse(ExampleModuleTestCase):
+    """
+    All tests share the same server. FLUSHALL + CONFIG RESETSTAT
+    runs between tests automatically for isolation.
+    """
+
+    def test_basic1(self):
+        self.client.execute_command("SET K V")
+        assert self.client.execute_command("GET K") == b"V"
+
+    def test_basic2(self):
+        # Previous test's data is flushed — this starts clean
+        assert self.client.execute_command("GET K") is None
+```
+
+`ReuseServerTestCase` inherits `ValkeyTestCase`, so all existing fixtures, `create_server()` calls, and `self.server`/`self.client` assignments work unchanged. To adopt it in your module, just change the base class — no other code changes needed.
+
+Tests run top-to-bottom in definition order (via `pytest-order` with `--order-scope=class`). If a config cannot be restored between tests, the server is torn down and a fresh one starts for the next test.
+
 For more examples, refer to the `tests` directory of this package.
