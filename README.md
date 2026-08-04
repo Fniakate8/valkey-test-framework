@@ -98,6 +98,8 @@ class TestExampleReuse(ExampleModuleTestCase):
 
 `ReuseServerTestCase` inherits `ValkeyTestCase`, so all existing fixtures, `create_server()` calls, and `self.server`/`self.client` assignments work unchanged. To adopt it in your module, just change the base class — no other code changes needed.
 
-Tests run top-to-bottom in definition order (via `pytest-order` with `--order-scope=class`). If a config cannot be restored between tests, the server is torn down and a fresh one starts for the next test.
+`create_server()` only starts the server on the first call — subsequent calls return the cached instance. Between tests, the overridden `teardown()` resets state (FLUSHALL, config restore, ACL reset, etc.) instead of killing the server. If the server becomes unreachable or a config cannot be restored, it is torn down and a fresh one starts for the next test.
+
+Tests run top-to-bottom in definition order (via `pytest-order` with `--order-scope=class`).
 
 For more examples, refer to the `tests` directory of this package.

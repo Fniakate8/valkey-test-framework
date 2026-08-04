@@ -759,6 +759,7 @@ class ReuseServerTestCase(ValkeyTestCase):
         wait_for_ping=True,
         connect_client=True,
     ):
+        # Return cached server if already running — no new server is created.
         if hasattr(self.__class__, "_shared_server") and self.__class__._shared_server:
             return self.__class__._shared_server, self.__class__._shared_client
 
@@ -785,47 +786,59 @@ class ReuseServerTestCase(ValkeyTestCase):
         return server, client
 
     def teardown(self):
+        # Reset shared server state between tests instead of shutting it down.
         if hasattr(self.__class__, "_shared_server") and self.__class__._shared_server:
-            client = self.__class__._shared_client
+            self._reset_server_state()
+
+    def _reset_server_state(self):
+        client = self.__class__._shared_client
+        try:
+            client.execute_command("REPLICAOF", "NO", "ONE")
+            client.flushall()
+            client.execute_command("CONFIG", "RESETSTAT")
+            client.execute_command("SCRIPT", "FLUSH")
             try:
-                client.execute_command("REPLICAOF", "NO", "ONE")
-                client.flushall()
-                client.execute_command("CONFIG", "RESETSTAT")
-                client.execute_command("SCRIPT", "FLUSH")
-                try:
-                    client.execute_command("FUNCTION", "FLUSH")
-                except Exception:
-                    pass
-                users = client.execute_command("ACL", "LIST")
-                for entry in users:
-                    if isinstance(entry, bytes):
-                        entry = entry.decode()
-                    if not entry.startswith("user default "):
-                        username = entry.split(" ")[1]
-                        client.execute_command("ACL", "DELUSER", username)
-                client.execute_command(
-                    "ACL", "SETUSER", "default", "reset", "on", "~*", "&*", "+@all"
-                )
-                if hasattr(self.__class__, "_initial_config"):
-                    current = client.config_get("*")
-                    for key, val in self.__class__._initial_config.items():
-                        if current.get(key) != val:
-                            try:
-                                client.config_set(key, val)
-                            except Exception:
-                                logging.warning(
-                                    f"Could not reset config '{key}' — "
-                                    f"tearing down server for fresh restart"
-                                )
-                                self.__class__._shared_server.exit()
-                                self.__class__._shared_server = None
-                                self.__class__._shared_client = None
-                                return
+                client.execute_command("FUNCTION", "FLUSH")
             except Exception:
-                logging.warning("Server unreachable during teardown — killing process")
-                self.__class__._shared_server.exit()
-                self.__class__._shared_server = None
-                self.__class__._shared_client = None
+                pass
+            users = client.execute_command("ACL", "LIST")
+            for entry in users:
+                if isinstance(entry, bytes):
+                    entry = entry.decode()
+                if not entry.startswith("user default "):
+                    username = entry.split(" ")[1]
+                    client.execute_command("ACL", "DELUSER", username)
+            client.execute_command(
+                "ACL",
+                "SETUSER",
+                "default",
+                "reset",
+                "on",
+                "nopass",
+                "~*",
+                "&*",
+                "+@all",
+            )
+            if hasattr(self.__class__, "_initial_config"):
+                current = client.config_get("*")
+                for key, val in self.__class__._initial_config.items():
+                    if current.get(key) != val:
+                        try:
+                            client.config_set(key, val)
+                        except Exception:
+                            logging.warning(
+                                f"Could not reset config '{key}' — "
+                                f"tearing down server for fresh restart"
+                            )
+                            self.__class__._shared_server.exit()
+                            self.__class__._shared_server = None
+                            self.__class__._shared_client = None
+                            return
+        except Exception:
+            logging.warning("Server unreachable during teardown — killing process")
+            self.__class__._shared_server.exit()
+            self.__class__._shared_server = None
+            self.__class__._shared_client = None
 
     @pytest.fixture(autouse=True, scope="class")
     def class_teardown(self, request):

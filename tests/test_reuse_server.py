@@ -21,7 +21,8 @@ class TestReuseServer(ReuseServerTestCase):
 
     @pytest.fixture(autouse=True)
     def setup_test(self, setup):
-        server_path = f"{os.path.dirname(os.path.realpath(__file__))}/.build/binaries/{os.environ['SERVER_VERSION']}/valkey-server"
+        version = os.environ.get("SERVER_VERSION", "unstable")
+        server_path = f"{os.path.dirname(os.path.realpath(__file__))}/.build/binaries/{version}/valkey-server"
         self.server, self.client = self.create_server(
             testdir=self.testdir, server_path=server_path
         )
@@ -53,10 +54,12 @@ class TestReuseServer(ReuseServerTestCase):
     def test_config_change_is_restored(self):
         """Proves configs modified during a test get restored for the next."""
         original = self.client.config_get("hz")["hz"]
+        self.__class__._original_hz = original
         self.client.config_set("hz", "50")
         assert self.client.config_get("hz")["hz"] == "50"
 
     def test_config_restored_after_previous(self):
         """Proves the config changed in the previous test was reset."""
+        expected = self.__class__._original_hz
         current = self.client.config_get("hz")["hz"]
-        assert current == "10", f"Expected hz=10 (default), got hz={current}"
+        assert current == expected, f"Expected hz={expected}, got hz={current}"
