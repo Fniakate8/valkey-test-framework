@@ -735,8 +735,10 @@ class ReuseServerTestCase(ValkeyTestCase):
     """Test case that reuses a single server across all tests in the class.
 
     Instead of spawning a fresh server per test, one server is started on the
-    first create_server() call and reused for all subsequent tests. FLUSHALL +
-    CONFIG RESETSTAT run between tests to reset state.
+    first create_server() call and reused for all subsequent tests. Between
+    tests, _reset_server_state() restores isolation by running: REPLICAOF NO
+    ONE, FLUSHALL, CONFIG RESETSTAT, SCRIPT FLUSH, FUNCTION FLUSH, ACL reset,
+    and full config restore.
 
     Usage — just change your base class:
 
@@ -789,8 +791,20 @@ class ReuseServerTestCase(ValkeyTestCase):
         # Reset shared server state between tests instead of shutting it down.
         if hasattr(self.__class__, "_shared_server") and self.__class__._shared_server:
             self._reset_server_state()
+        # Clean up any additional servers created during this test.
+        for server in self.server_list:
+            if server and server is not self.__class__._shared_server:
+                server.exit()
+        self.server_list = []
 
     def _reset_server_state(self):
+        """Reset the shared server to a clean state between tests.
+
+        Clears data, scripts, functions, ACL users, replication, and restores
+        all config values to their initial state. If the server is unreachable
+        or a config cannot be restored, the server is killed so the next test
+        gets a fresh instance.
+        """
         client = self.__class__._shared_client
         try:
             client.execute_command("REPLICAOF", "NO", "ONE")
@@ -847,3 +861,7 @@ class ReuseServerTestCase(ValkeyTestCase):
             self.__class__._shared_server.exit()
             self.__class__._shared_server = None
             self.__class__._shared_client = None
+        for server in getattr(self, "server_list", []):
+            if server:
+                server.exit()
+        self.server_list = []

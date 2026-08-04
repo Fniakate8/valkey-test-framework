@@ -100,6 +100,8 @@ class TestExampleReuse(ExampleModuleTestCase):
 
 `create_server()` only starts the server on the first call — subsequent calls return the cached instance. Between tests, the overridden `teardown()` resets state (FLUSHALL, config restore, ACL reset, etc.) instead of killing the server. If the server becomes unreachable or a config cannot be restored, it is torn down and a fresh one starts for the next test.
 
+If a test creates additional servers (e.g. a server without a module loaded for RDB testing), those are tracked in `server_list` and automatically cleaned up at the end of that test. Only the shared server persists across tests.
+
 Tests run top-to-bottom in definition order (via `pytest-order` with `--order-scope=class`).
 
 For more examples, refer to the `tests` directory of this package.
