@@ -10,6 +10,7 @@ Tests run top-to-bottom in definition order (via pytest-order with
 so ordering matters.
 """
 
+import os
 import pytest
 from conftest import resource_port_tracker
 from valkey_test_case import ReuseServerTestCase
@@ -20,7 +21,10 @@ class TestReuseServer(ReuseServerTestCase):
 
     @pytest.fixture(autouse=True)
     def setup_test(self, setup):
-        self.server, self.client = self.create_server(testdir=self.testdir)
+        server_path = f"{os.path.dirname(os.path.realpath(__file__))}/.build/binaries/{os.environ['SERVER_VERSION']}/valkey-server"
+        self.server, self.client = self.create_server(
+            testdir=self.testdir, server_path=server_path
+        )
 
     def test_write_and_read(self):
         """Basic write/read on the shared server."""
