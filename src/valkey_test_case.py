@@ -736,9 +736,10 @@ class ReuseServerTestCase(ValkeyTestCase):
 
     Instead of spawning a fresh server per test, one server is started on the
     first create_server() call and reused for all subsequent tests. Between
-    tests, _reset_server_state() restores isolation by running: REPLICAOF NO
-    ONE, FLUSHALL, CONFIG RESETSTAT, SCRIPT FLUSH, FUNCTION FLUSH, ACL reset,
-    and full config restore.
+    tests, _reset_server_state() restores isolation by running: RESET on the
+    shared connection, CLIENT KILL for connections a test spawned, REPLICAOF NO
+    ONE, FLUSHALL, CONFIG RESETSTAT, SCRIPT FLUSH, FUNCTION FLUSH, SLOWLOG /
+    LATENCY / ACL LOG resets, ACL user reset, and full config restore.
 
     Usage — just change your base class:
 
@@ -800,13 +801,23 @@ class ReuseServerTestCase(ValkeyTestCase):
     def _reset_server_state(self):
         """Reset the shared server to a clean state between tests.
 
-        Clears data, scripts, functions, ACL users, replication, and restores
-        all config values to their initial state. If the server is unreachable
-        or a config cannot be restored, the server is killed so the next test
-        gets a fresh instance.
+        Resets the shared connection, kills any client connections a test
+        spawned, clears data, scripts, functions, server-side logs (slowlog,
+        latency, ACL log), and ACL users, unwinds replication, and restores all
+        config values to their initial state. If the server is unreachable or a
+        config cannot be restored, the server is killed so the next test gets a
+        fresh instance.
         """
         client = self.__class__._shared_client
         try:
+            # RESET the shared connection first to clear any per-connection
+            # state a test left behind (MULTI/WATCH, CLIENT TRACKING, RESP
+            # version, selected DB, MONITOR/pubsub). Doing this first ensures
+            # the following commands aren't silently queued inside a MULTI.
+            client.execute_command("RESET")
+            # Kill any client connections a test spawned. CLIENT KILL defaults
+            # to SKIPME yes, so the shared client issuing this is not killed.
+            client.execute_command("CLIENT", "KILL", "TYPE", "normal")
             client.execute_command("REPLICAOF", "NO", "ONE")
             client.flushall()
             client.execute_command("CONFIG", "RESETSTAT")
@@ -815,6 +826,10 @@ class ReuseServerTestCase(ValkeyTestCase):
                 client.execute_command("FUNCTION", "FLUSH")
             except Exception:
                 pass
+            # Clear server-side logs so per-test log checks start clean.
+            client.execute_command("SLOWLOG", "RESET")
+            client.execute_command("LATENCY", "RESET")
+            client.execute_command("ACL", "LOG", "RESET")
             users = client.execute_command("ACL", "LIST")
             for entry in users:
                 if isinstance(entry, bytes):

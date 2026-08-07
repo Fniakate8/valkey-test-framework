@@ -1,9 +1,10 @@
 """
 Demonstrates ReuseServerTestCase usage.
 
-All tests in this class share ONE server. Between each test, FLUSHALL + CONFIG
-RESETSTAT run automatically to give each test a clean slate without the cost of
-restarting the server.
+All tests in this class share ONE server. Between each test, the server state
+is reset automatically (connection RESET, spawned clients killed, FLUSHALL,
+config restore, ACL reset, log resets, etc.) to give each test a clean slate
+without the cost of restarting the server.
 
 Tests run top-to-bottom in definition order (via pytest-order with
 --order-scope=class). Some tests verify isolation from the previous test,
@@ -63,3 +64,40 @@ class TestReuseServer(ReuseServerTestCase):
         expected = self.__class__._original_hz
         current = self.client.config_get("hz")["hz"]
         assert current == expected, f"Expected hz={expected}, got hz={current}"
+
+    def test_spawn_extra_connection_and_acl_user(self):
+        """Leave an extra connection and an ACL user behind for teardown."""
+        extra = self.server.get_new_client()
+        self.__class__._extra_client_id = extra.execute_command("CLIENT", "ID")
+        self.client.execute_command(
+            "ACL", "SETUSER", "leaked", "on", ">pw", "~*", "+@all"
+        )
+        assert self._acl_user_exists("leaked")
+
+    def test_extra_connection_and_acl_user_gone(self):
+        """Proves teardown killed the spare connection and deleted the ACL user."""
+        # The connection spawned in the previous test should no longer exist.
+        live_ids = {
+            int(line.split("id=")[1].split(" ")[0])
+            for line in self._client_list().splitlines()
+            if "id=" in line
+        }
+        assert (
+            self.__class__._extra_client_id not in live_ids
+        ), "Spawned connection should have been killed by CLIENT KILL"
+        # The ACL user created in the previous test should be gone.
+        assert not self._acl_user_exists(
+            "leaked"
+        ), "ACL user from previous test should have been deleted"
+
+    def _client_list(self):
+        result = self.client.execute_command("CLIENT", "LIST")
+        return result.decode() if isinstance(result, bytes) else result
+
+    def _acl_user_exists(self, name):
+        for entry in self.client.execute_command("ACL", "LIST"):
+            if isinstance(entry, bytes):
+                entry = entry.decode()
+            if entry.startswith(f"user {name} "):
+                return True
+        return False

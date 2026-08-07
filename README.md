@@ -83,8 +83,9 @@ class ExampleModuleTestCase(ReuseServerTestCase):
 
 class TestExampleReuse(ExampleModuleTestCase):
     """
-    All tests share the same server. FLUSHALL + CONFIG RESETSTAT
-    runs between tests automatically for isolation.
+    All tests share the same server. Server state is reset between
+    tests automatically (FLUSHALL, config restore, ACL reset, etc.)
+    for isolation.
     """
 
     def test_basic1(self):
@@ -98,7 +99,7 @@ class TestExampleReuse(ExampleModuleTestCase):
 
 `ReuseServerTestCase` inherits `ValkeyTestCase`, so all existing fixtures, `create_server()` calls, and `self.server`/`self.client` assignments work unchanged. To adopt it in your module, just change the base class — no other code changes needed.
 
-`create_server()` only starts the server on the first call — subsequent calls return the cached instance. Between tests, the overridden `teardown()` resets state (FLUSHALL, config restore, ACL reset, etc.) instead of killing the server. If the server becomes unreachable or a config cannot be restored, it is torn down and a fresh one starts for the next test.
+`create_server()` only starts the server on the first call — subsequent calls return the cached instance. Between tests, the overridden `teardown()` resets state instead of killing the server: it issues `RESET` on the shared connection, kills any client connections a test spawned, flushes data/scripts/functions, resets ACL users and the slowlog/latency/ACL logs, and restores any modified config values. If the server becomes unreachable or a config cannot be restored, it is torn down and a fresh one starts for the next test.
 
 If a test creates additional servers (e.g. a server without a module loaded for RDB testing), those are tracked in `server_list` and automatically cleaned up at the end of that test. Only the shared server persists across tests.
 
