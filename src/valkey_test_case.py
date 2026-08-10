@@ -79,7 +79,9 @@ class ValkeyServerHandle(object):
         self.client = None
         self.external_mode = external_mode
         self.port = port
+        self.port_tracker = port_tracker
         self.bind_ip = bind_ip
+        self._ports_released = False
         self.args = {}
         self.args["port"] = self.port
         self.args["logfile"] = f"logfile_{port}"
@@ -150,6 +152,10 @@ class ValkeyServerHandle(object):
                 os.remove(os.path.join(self.cwd, self.args["cluster-config-file"]))
             except OSError:
                 os.rmdir(os.path.join(self.cwd, self.args["cluster-config-file"]))
+
+        if self.port_tracker and not self._ports_released:
+            self.port_tracker.release_port(self.port)
+            self._ports_released = True
 
     def _waitForExit(self):
         try:
