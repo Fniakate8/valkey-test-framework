@@ -808,6 +808,42 @@ class ClusterNodeHandle(ValkeyServerHandle):
             command.extend([args[t], args[t + 1] - 1])
         return self.client.execute_command(*command)
 
+    # Building blocks for moving a slot from one node to another.
+    # ClusterTestCase.migrate_slot() calls these in the right order.
+
+    def count_keys_in_slot(self, slot):
+        """How many keys this node currently holds in the given slot."""
+        return int(self.client.execute_command("CLUSTER", "COUNTKEYSINSLOT", slot))
+
+    def start_importing_slot(self, slot, source_id):
+        """Tell this node to start accepting a slot coming from source_id."""
+        return self.client.execute_command(
+            "CLUSTER", "SETSLOT", slot, "IMPORTING", source_id
+        )
+
+    def start_migrating_slot(self, slot, target_id):
+        """Tell this node it is handing a slot over to target_id."""
+        return self.client.execute_command(
+            "CLUSTER", "SETSLOT", slot, "MIGRATING", target_id
+        )
+
+    def assign_slot_owner(self, slot, owner_id):
+        """Record which node now owns the slot. Only valid on a primary."""
+        return self.client.execute_command("CLUSTER", "SETSLOT", slot, "NODE", owner_id)
+
+    def get_slot_owner_id(self, slot):
+        """Which node id THIS node believes owns the given slot (or None)."""
+        for slot_range in self.client.cluster("SLOTS"):
+            start, end = slot_range[0], slot_range[1]
+            if start <= slot <= end:
+                return slot_range[2][2].decode()
+        return None
+
+    def is_primary(self):
+        """True if this node is currently a primary (master), not a replica."""
+        role = self.client.execute_command("ROLE")[0]
+        return role in (b"master", "master")
+
     def wait_for_cluster_known_nodes(self, count):
         """Wait until we are connected to exactly count nodes."""
         wait_for_equal(
@@ -963,6 +999,77 @@ class ClusterTestCase(ValkeyTestCase):
                 host = owner_host.decode()
                 break
         return ValkeyCluster(host=host, port=primary.port)
+
+    def get_slot_owner(self, slot):
+        """Return the node that currently owns `slot`, or None if unassigned."""
+        for slot_range in self.nodes[0].client.cluster("SLOTS"):
+            start, end, owner_id = (
+                slot_range[0],
+                slot_range[1],
+                slot_range[2][2].decode(),
+            )
+            if start <= slot <= end:
+                return next((n for n in self.nodes if n.nodeid == owner_id), None)
+        return None
+
+    def wait_for_slot_owner(self, slot, expected_owner):
+        """Wait until all nodes agree `expected_owner` owns `slot`.
+
+        New ownership has to gossip across the cluster after a migration, so we
+        poll instead of sleeping for a fixed guess.
+        """
+        wait_for_true(
+            lambda: all(
+                node.get_slot_owner_id(slot) == expected_owner.nodeid
+                for node in self.nodes
+            ),
+            timeout=TEST_MAX_WAIT_TIME_SECONDS,
+        )
+
+    def migrate_slot(self, source, target, slot, dbs=(0,), timeout_ms=5000):
+        """Move a slot and all its keys from source to target, then hand off
+        ownership.
+
+        Runs the manual migration protocol: mark the slot IMPORTING on the
+        target and MIGRATING on the source, batch-move every key in the slot
+        with MIGRATE, then announce the new owner on every primary. Replicas
+        reject CLUSTER SETSLOT and learn the new owner from their primary, so
+        they are skipped.
+
+        `dbs` lists which databases to move keys from. Migrating any DB other
+        than 0 requires the cluster to be started with `cluster-databases > 1`;
+        plain cluster mode only has DB 0.
+        """
+        target.start_importing_slot(slot, source.nodeid)
+        source.start_migrating_slot(slot, target.nodeid)
+
+        # Move keys on a dedicated connection so the caller's client keeps its
+        # own selected DB. GETKEYSINSLOT only sees the connection's current DB,
+        # so we select each DB in turn and drain the slot in batches.
+        conn = source.get_new_client()
+        try:
+            for db in dbs:
+                conn.execute_command("SELECT", db)
+                while True:
+                    keys = conn.execute_command("CLUSTER", "GETKEYSINSLOT", slot, 100)
+                    if not keys:
+                        break
+                    conn.execute_command(
+                        "MIGRATE",
+                        target.bind_ip,
+                        target.port,
+                        "",
+                        db,
+                        timeout_ms,
+                        "KEYS",
+                        *keys,
+                    )
+        finally:
+            conn.close()
+
+        for node in self.nodes:
+            if node.is_primary():
+                node.assign_slot_owner(slot, target.nodeid)
 
     def teardown(self):
         if self.cluster_client is not None:

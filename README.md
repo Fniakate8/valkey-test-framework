@@ -90,3 +90,23 @@ class TestExampleCluster(ClusterTestCase):
 ```
 
 To apply startup arguments (modules, configs) to every node, set `self.args` inside the test before calling `setup_cluster`.
+
+To test slot migration, use `migrate_slot(source, target, slot)` to move a slot and its keys from one node to another, then `wait_for_slot_owner(slot, target)` to wait until every node agrees on the new owner. `get_slot_owner(slot)` returns the node that currently owns a slot.
+
+```
+class TestExampleMigration(ClusterTestCase):
+    def test_migrate(self):
+        self.server_path = "/path_to_your_valkey_server_binary"
+        self.setup_cluster(num_shards=2, num_replicas_per_shard=0)
+
+        slot = key_slot(b"key")
+        source = self.get_slot_owner(slot)
+        target = next(n for n in self.nodes if n.nodeid != source.nodeid)
+        source.client.set("key", "value")
+
+        self.migrate_slot(source, target, slot)
+        self.wait_for_slot_owner(slot, target)
+        assert target.client.get("key") == b"value"
+```
+
+Pass `dbs=(0, 1, ...)` to `migrate_slot` to move keys across multiple databases; migrating any database other than 0 requires the cluster to be started with `cluster-databases > 1`.
