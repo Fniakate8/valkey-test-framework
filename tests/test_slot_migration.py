@@ -3,9 +3,10 @@ Slot Migration Tests
 
 Verifies ClusterTestCase.migrate_slot(): a slot (and the keys in it) moves from
 one node to another on a live cluster, ownership updates across the cluster, and
-the keys are served from the new owner afterward. Covers single-key, many-key,
-multi-DB (requires cluster-databases > 1), caller-DB isolation, cluster-wide
-ownership, empty-slot, and replica-shard migrations.
+the keys are served from the new owner afterward. Covers key movement (incl.
+slots larger than one batch), multi-DB (requires cluster-databases > 1),
+caller-DB isolation, cluster-wide ownership, empty-slot, and replica-shard
+migrations.
 """
 
 import os
@@ -35,29 +36,12 @@ class TestSlotMigration(ClusterTestCase):
         target = next(n for n in self.nodes if n.nodeid != source.nodeid)
         return source, target
 
-    def test_migrate_slot_moves_key(self):
-        """A key's slot migrates to another node; the key moves with it."""
+    def test_migrate_slot_moves_keys(self):
+        """All keys in a slot move to the new owner, and their values survive."""
         self.setup_cluster(num_shards=2, num_replicas_per_shard=0)
 
-        key = "migkey"
-        slot = key_slot(key.encode())
-        source, target = self._pick_source_and_target(slot)
-
-        source.client.set(key, "hello")
-        assert source.count_keys_in_slot(slot) == 1
-
-        self.migrate_slot(source, target, slot)
-        self.wait_for_slot_owner(slot, target)
-
-        assert target.count_keys_in_slot(slot) == 1
-        assert source.count_keys_in_slot(slot) == 0
-        assert target.client.get(key) == b"hello"
-
-    def test_migrate_slot_moves_many_keys(self):
-        """All keys in a slot move, not just the first batch."""
-        self.setup_cluster(num_shards=2, num_replicas_per_shard=0)
-
-        # Hash tag {m} forces every key into the same slot.
+        # Hash tag {m} forces every key into the same slot. Use enough keys to
+        # cross the 100-key GETKEYSINSLOT batch boundary migrate_slot drains.
         slot = key_slot(b"{m}")
         source, target = self._pick_source_and_target(slot)
         for i in range(250):
@@ -69,6 +53,8 @@ class TestSlotMigration(ClusterTestCase):
 
         assert source.count_keys_in_slot(slot) == 0
         assert target.count_keys_in_slot(slot) == 250
+        # A specific key's value survived the move, not just the count.
+        assert target.client.get("{m}:0") == b"0"
 
     def test_migrate_slot_multiple_databases(self):
         """Keys sharing a slot across several DBs all move (cluster-databases)."""
