@@ -77,3 +77,29 @@ class TestClusterTeardownLeaks(ClusterTestCase):
         assert (
             len(self.port_tracker.open_and_locked_files) == initial
         ), "double exit() must leave no locks held and not error"
+
+    def test_restart_keeps_port_reserved(self):
+        """restart() calls exit() but must NOT release the port locks — the
+        node has to come back up on the same port."""
+        initial = len(self.port_tracker.open_and_locked_files)
+
+        node = self.create_node()
+        node.start(connect_client=True)
+        port = node.port
+        after_start = len(self.port_tracker.open_and_locked_files)
+        assert after_start - initial == 3, "one node reserves 3 port locks"
+
+        node.restart()
+
+        # The port locks are still held and the node is back on the same port.
+        assert (
+            len(self.port_tracker.open_and_locked_files) == after_start
+        ), "restart() must keep the node's port locks reserved"
+        assert node.port == port
+        assert node.client.ping() is True
+
+        # A normal exit afterward releases them.
+        node.exit()
+        assert (
+            len(self.port_tracker.open_and_locked_files) == initial
+        ), "exit() after restart still releases the port locks"

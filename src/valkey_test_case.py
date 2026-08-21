@@ -102,7 +102,7 @@ class ValkeyServerHandle(object):
     def get_new_client(self):
         return self.create_from_server()
 
-    def exit(self, cleanup=True, remove_nodes_conf=True):
+    def exit(self, cleanup=True, remove_nodes_conf=True, release_ports=True):
         if self.client:
             if not self.external_mode:
                 try:
@@ -153,7 +153,9 @@ class ValkeyServerHandle(object):
             except OSError:
                 os.rmdir(os.path.join(self.cwd, self.args["cluster-config-file"]))
 
-        if self.port_tracker and not self._ports_released:
+        # A restart calls exit() but must keep the port reserved so the server
+        # comes back on the same one — callers pass release_ports=False for that.
+        if release_ports and self.port_tracker and not self._ports_released:
             self.port_tracker.release_port(self.port)
             self._ports_released = True
 
@@ -292,7 +294,9 @@ class ValkeyServerHandle(object):
                 self, remove_rdb, remove_nodes_conf, connect_client
             )
         else:
-            self.exit(remove_rdb, remove_nodes_conf)
+            # Keep the port reserved across the restart so the server comes
+            # back up on the same port.
+            self.exit(remove_rdb, remove_nodes_conf, release_ports=False)
             self.start(connect_client=connect_client)
 
     def is_alive(self):
@@ -620,8 +624,8 @@ class ValkeyReplica(ValkeyServerHandle):
         self.primaryport = primaryport
         self.args["slaveof"] = self.primaryhost + " " + str(self.primaryport)
 
-    def exit(self, remove_rdb=True, remove_nodes_conf=True):
-        super(ValkeyReplica, self).exit(remove_rdb, remove_nodes_conf)
+    def exit(self, remove_rdb=True, remove_nodes_conf=True, release_ports=True):
+        super(ValkeyReplica, self).exit(remove_rdb, remove_nodes_conf, release_ports)
         del self.clients[:]
 
 
