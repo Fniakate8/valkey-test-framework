@@ -94,6 +94,9 @@ To apply startup arguments (modules, configs) to every node, set `self.args` ins
 To test slot migration, use `migrate_slot(source, target, slot)` to move a slot and its keys from one node to another, then `wait_for_slot_owner(slot, target)` to wait until every node agrees on the new owner. `get_slot_owner(slot)` returns the node that currently owns a slot.
 
 ```
+from valkey_test_case import ClusterTestCase
+from valkey.cluster import key_slot
+
 class TestExampleMigration(ClusterTestCase):
     def test_migrate(self):
         self.server_path = "/path_to_your_valkey_server_binary"

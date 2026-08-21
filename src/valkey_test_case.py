@@ -1067,8 +1067,18 @@ class ClusterTestCase(ValkeyTestCase):
         finally:
             conn.close()
 
+        # Finalize ownership target-first: the target (and its replicas) must
+        # persist the new topology before the source gives up the slot. An
+        # out-of-order handoff where the source releases first could leave the
+        # slot ownerless if the target then fails. Remaining primaries are
+        # updated afterward; replicas learn from their primary / via gossip.
+        target.assign_slot_owner(slot, target.nodeid)
+        source.assign_slot_owner(slot, target.nodeid)
         for node in self.nodes:
-            if node.is_primary():
+            if node.is_primary() and node.nodeid not in (
+                target.nodeid,
+                source.nodeid,
+            ):
                 node.assign_slot_owner(slot, target.nodeid)
 
     def teardown(self):
